@@ -19,6 +19,8 @@ from __future__ import annotations
 import time
 from urllib.parse import quote
 
+import link_utils
+
 # Playwright는 선택 의존성이다. source="naver_map"일 때만 필요하므로
 # import 실패 시 친절한 안내를 위해 여기서 잡아 둔다.
 try:
@@ -29,6 +31,9 @@ except ImportError:  # pragma: no cover - 설치 안내용
 
 # 네이버 지도 검색 URL (검색어를 경로에 직접 넣는 방식).
 SEARCH_URL_TEMPLATE = "https://map.naver.com/p/search/{query}"
+
+# 인스타 보조 검색(네이버 통합검색) URL.
+NAVER_SEARCH_URL = "https://search.naver.com/search.naver?query={query}"
 
 # 검색 결과 목록 / 상세 패널 iframe.
 SEARCH_IFRAME = "#searchIframe"
@@ -58,18 +63,13 @@ DETAIL_CATEGORY_SELECTORS = ["span.lnJFt", "span.DJJvD"]
 DETAIL_ADDRESS_SELECTORS = ["span.LDgIH", "div.PkgBl span", "a.PkgBl"]
 DETAIL_PHONE_SELECTORS = ["span.xlx7Q", "div.O8qbU span.xlx7Q"]
 
-# 홈페이지 후보에서 제외할 호스트(네이버 내부/정적 리소스/인스타 외 소셜).
-HOMEPAGE_EXCLUDE_HOSTS = [
-    "naver.com",
-    "naver.me",
-    "pstatic.net",
-    "map.naver",
-    "booking.naver",
-    "pcmap",
-    "facebook.com",
-    "youtube.com",
-    "youtu.be",
-    "blog.naver",
+# 상세 패널에서 외부 링크가 모여 있는 영역(홈페이지/소식/정보/예약/블로그 등).
+# 영역을 못 찾으면 패널 전체의 a[href]로 폴백한다.
+DETAIL_LINK_AREA_SELECTORS = [
+    "div.place_section_content",
+    "div.O8qbU",
+    "div.jO09N",
+    "div.CcOJv",
 ]
 
 # 프레임/요소 대기 타임아웃(ms).
@@ -185,39 +185,108 @@ class NaverMapClient:
         except Exception:
             pass
 
-    def _extract_links(self, entry) -> tuple[str, str]:
-        """상세 패널의 외부 링크에서 (홈페이지, 인스타그램) URL을 추출한다.
+    def _collect_anchor_hrefs(self, entry) -> list[str]:
+        """상세 패널의 링크 영역(홈페이지/소식/정보/예약/블로그)에서 모든
+        a[href]를 모은다. 영역을 못 찾으면 패널 전체 a[href]로 폴백한다."""
+        hrefs: list[str] = []
+        seen: set[str] = set()
 
-        네이버 내부/예약/소셜(인스타 제외) 링크는 홈페이지 후보에서 제외한다.
-        instagram.com 링크는 인스타그램으로 분류한다.
-        """
-        homepage, instagram = "", ""
-        try:
-            links = entry.locator("a[href^='http']")
-            count = min(links.count(), 40)
-        except Exception:
-            return homepage, instagram
-
-        for i in range(count):
+        scopes = []
+        for sel in DETAIL_LINK_AREA_SELECTORS:
             try:
-                href = links.nth(i).get_attribute("href", timeout=SHORT_TIMEOUT) or ""
+                loc = entry.locator(sel)
+                if loc.count() > 0:
+                    scopes.append(loc)
             except Exception:
                 continue
-            if not href:
+        # 영역 셀렉터가 하나도 안 잡히면 패널 전체에서 수집
+        if not scopes:
+            scopes = [entry]
+
+        for scope in scopes:
+            try:
+                anchors = scope.locator("a[href]")
+                count = min(anchors.count(), 60)
+            except Exception:
                 continue
-            low = href.lower()
-            if "instagram.com" in low:
-                if not instagram:
-                    instagram = href
-                continue
-            # 홈페이지 후보: 네이버 내부/정적 리소스/기타 소셜은 제외
-            if any(bad in low for bad in HOMEPAGE_EXCLUDE_HOSTS):
-                continue
-            if not homepage:
-                homepage = href
+            for i in range(count):
+                try:
+                    href = anchors.nth(i).get_attribute(
+                        "href", timeout=SHORT_TIMEOUT
+                    ) or ""
+                except Exception:
+                    continue
+                href = href.strip()
+                if href and href not in seen:
+                    seen.add(href)
+                    hrefs.append(href)
+        return hrefs
+
+    def _extract_links(self, entry, log) -> tuple[str, str]:
+        """상세 패널의 모든 외부 링크를 분류해 (홈페이지, 인스타그램)을 반환한다.
+
+        - 네이버 리다이렉트/공유 URL은 실제 외부 URL로 디코딩 후 판정한다.
+        - instagram.com / instagr.am / threads.net → 인스타그램.
+        - 네이버 내부/타 소셜 → 제외(저장하지 않음).
+        - 인스타 후보를 제외한 경우 로그를 남긴다.
+        """
+        homepage, instagram = "", ""
+        for href in self._collect_anchor_hrefs(entry):
+            kind, url = link_utils.classify_link(href)
+            if kind == "instagram" and not instagram:
+                instagram = url
+                self._log(log, f"    [인스타] 링크 찾음: {url}")
+            elif kind == "homepage" and not homepage:
+                homepage = url
+            elif kind == "exclude":
+                low = href.lower()
+                if ("insta" in low) or ("threads" in low):
+                    # 인스타처럼 보였지만 유효 프로필로 분류되지 않은 후보
+                    self._log(log, f"    [인스타] 후보 제외: {href}")
         return homepage, instagram
 
-    def _extract_detail(self, log) -> dict:
+    @staticmethod
+    def _log(log, msg: str) -> None:
+        if log is not None:
+            log.log(msg)
+
+    def _search_instagram(self, place_name: str, region_hint: str, log) -> str:
+        """상세에 인스타 링크가 없을 때 보조 검색으로 프로필 URL을 찾는다.
+
+        '업체명 지역 인스타그램'으로 네이버 통합검색을 열어 결과 본문에서
+        instagram.com 프로필 URL만 추출한다.
+        """
+        if not place_name:
+            return ""
+        terms = [t for t in (place_name, region_hint, "인스타그램") if t]
+        query = " ".join(terms)
+        search_page = None
+        try:
+            search_page = self._context.new_page()
+            search_page.goto(
+                NAVER_SEARCH_URL.format(query=quote(query)),
+                wait_until="domcontentloaded",
+                timeout=FRAME_TIMEOUT,
+            )
+            self._sleep()
+            content = search_page.content()
+            url = link_utils.extract_instagram_from_text(content)
+            if url:
+                self._log(log, f"    [인스타] 보조검색 찾음: {url} (검색어: {query})")
+            else:
+                self._log(log, f"    [인스타] 보조검색 없음 (검색어: {query})")
+            return url
+        except Exception as exc:
+            self._log(log, f"    [인스타] 보조검색 실패: {exc}")
+            return ""
+        finally:
+            if search_page is not None:
+                try:
+                    search_page.close()
+                except Exception:
+                    pass
+
+    def _extract_detail(self, log, region_hint: str = "", search_fallback: bool = True) -> dict:
         """상세 패널(entryIframe)에서 매장명/카테고리/주소/전화번호/링크를 추출."""
         detail = {
             "place_name": "",
@@ -250,7 +319,16 @@ class NaverMapClient:
                 pass
         detail["phone"] = phone
 
-        detail["homepage_url"], detail["instagram_url"] = self._extract_links(entry)
+        homepage, instagram = self._extract_links(entry, log)
+        detail["homepage_url"] = homepage
+
+        name = detail["place_name"] or ""
+        if not instagram and search_fallback:
+            instagram = self._search_instagram(name, region_hint, log)
+        if not instagram:
+            self._log(log, f"    [인스타] 없음: {name or '(이름미상)'}")
+
+        detail["instagram_url"] = instagram
         return detail
 
     # ---- 메인 수집 ---------------------------------------------------------
@@ -277,6 +355,10 @@ class NaverMapClient:
         page = self._page
         results: list[dict] = []
         seen: set[str] = set()
+
+        # 인스타 보조검색용 지역 힌트(검색어의 첫 토큰을 지역으로 사용).
+        region_hint = keyword.split()[0] if keyword.split() else ""
+        search_fallback = bool(settings.get("instagram_search_fallback", True))
 
         url = SEARCH_URL_TEMPLATE.format(query=quote(keyword))
         try:
@@ -335,7 +417,9 @@ class NaverMapClient:
                         link = item
                     link.click(timeout=SHORT_TIMEOUT)
                     self._sleep()
-                    detail = self._extract_detail(log)
+                    detail = self._extract_detail(
+                        log, region_hint=region_hint, search_fallback=search_fallback
+                    )
                     place["place_name"] = detail["place_name"] or name
                     place["category"] = detail["category"] or category
                     place["address"] = detail["address"]

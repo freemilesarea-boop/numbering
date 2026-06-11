@@ -4,6 +4,7 @@
     "headless": false,
     "delay_seconds": 1.0,
     "scroll_count": 30,
+    "instagram_search_fallback": true,
     "max_pages_per_keyword": 3,
     "require_phone": true,
     "export_only_new": true,
