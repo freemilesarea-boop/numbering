@@ -72,26 +72,55 @@ class KakaoClient:
         except ValueError as exc:
             raise KakaoApiError(f"응답 JSON 파싱 실패: {exc}") from exc
 
+    def start(self) -> None:
+        """수집기 인터페이스 일관성을 위한 no-op (네트워크 세션은 생성자에서 준비됨)."""
+
+    def close(self) -> None:
+        """HTTP 세션을 닫는다."""
+        try:
+            self.session.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _to_place(doc: dict) -> dict:
+        """Kakao 응답 1건을 공통 place 스키마로 변환한다."""
+        return {
+            "place_name": doc.get("place_name", ""),
+            "phone": doc.get("phone", ""),
+            "address": doc.get("road_address_name") or doc.get("address_name", ""),
+            "category": doc.get("category_name", ""),
+            "place_url": doc.get("place_url", ""),
+        }
+
     def collect_places(
         self,
         keyword: str,
-        max_pages: int,
-        delay_seconds: float,
+        settings: dict,
+        log=None,
+        max_results: int | None = None,
     ) -> list[dict]:
-        """특정 키워드의 여러 페이지를 순회하며 장소(raw document)를 수집한다.
+        """특정 키워드의 여러 페이지를 순회하며 장소를 공통 스키마로 수집한다.
 
+        - settings에서 max_pages_per_keyword / delay_seconds를 읽는다.
         - 각 페이지 호출 사이에 delay_seconds 만큼 대기한다.
         - 마지막 페이지(is_end)거나 결과가 비면 조기 종료한다.
-        - 특정 키워드 수집 중 오류가 나면 KakaoApiError를 그대로 전파한다.
-          (호출자가 키워드 단위로 실패 처리)
+        - max_results에 도달하면 조기 종료한다.
+        - 수집 중 오류가 나면 KakaoApiError를 그대로 전파한다(키워드 단위 실패).
         """
+        max_pages = int(settings.get("max_pages_per_keyword", 3) or 3)
+        delay_seconds = float(settings.get("delay_seconds", 0.25) or 0)
+
         places: list[dict] = []
 
         for page in range(1, max(1, max_pages) + 1):
             data = self.search_keyword(keyword, page=page, size=MAX_PAGE_SIZE)
 
             documents = data.get("documents", []) or []
-            places.extend(documents)
+            for doc in documents:
+                places.append(self._to_place(doc))
+                if max_results is not None and len(places) >= max_results:
+                    return places
 
             meta = data.get("meta", {}) or {}
             # is_end가 True거나, 더 이상 문서가 없으면 종료

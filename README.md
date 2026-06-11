@@ -17,13 +17,19 @@ output/leads_성수_카페_2026-06-11.xlsx
 
 ## 동작 방식
 
-화면 크롤링을 하지 않고 **Kakao Local API**(공식 키워드 장소 검색)만 사용합니다.
+수집 소스(`settings.source`)를 두 가지 중에서 선택할 수 있습니다.
 
-```
-GET https://dapi.kakao.com/v2/local/search/keyword.json
-```
+| source | 방식 | API 키 | 비고 |
+|---|---|---|---|
+| `naver_map` | **네이버 지도 브라우저 자동화(Playwright)** | 불필요 | 기본 예시. 브라우저로 검색 결과를 스크롤하며 수집 |
+| `kakao` | **Kakao Local API**(공식 키워드 장소 검색) | 필요(`.env`) | `GET /v2/local/search/keyword.json` |
 
-수집 → 중복 제거 → 엑셀 생성 → 로그 저장의 흐름으로 동작합니다.
+어느 소스든 **수집 → 중복 제거 → SQLite 저장 → 엑셀 생성 → 로그 저장**의
+동일한 흐름으로 동작하며, dedupe/database/excel_exporter 구조를 공유합니다.
+
+> ⚠️ `naver_map`은 네이버 지도 화면을 자동화하는 방식이라 네이버의 약관 및
+> DOM 구조 변경에 영향을 받습니다. 셀렉터가 바뀌면 `naver_map_client.py`의
+> `*_SELECTORS` 상수를 갱신해야 할 수 있습니다.
 
 ## 설치 및 실행
 
@@ -31,15 +37,21 @@ GET https://dapi.kakao.com/v2/local/search/keyword.json
 # 1. 패키지 설치
 pip install -r requirements.txt
 
-# 2. 환경변수 파일 생성 (.env.example을 복사)
+# 2. (naver_map 사용 시) Playwright 브라우저 설치 — 최초 1회
+playwright install chromium
+
+# 3. 환경변수 파일 생성 (.env.example을 복사) — kakao 소스에서만 필요
 cp .env.example .env
 
-# 3. 설정 파일 생성
+# 4. 설정 파일 생성
 cp config.example.json config.json
 
-# 4. 실행
+# 5. 실행
 python main.py
 ```
+
+> `source="naver_map"`이면 API 키 없이 바로 실행됩니다(3번 단계 생략 가능).
+> `source="kakao"`이면 아래 `.env` 설정이 필요합니다.
 
 ### `.env` 설정 (필수)
 
@@ -78,11 +90,14 @@ python main.py
 ```json
 {
   "settings": {
-    "delay_seconds": 0.25,
+    "source": "naver_map",
+    "headless": false,
+    "delay_seconds": 1.0,
+    "scroll_count": 30,
     "max_pages_per_keyword": 3,
-    "require_phone": false,
+    "require_phone": true,
+    "export_only_new": true,
     "output_dir": "output",
-    "export_only_new": false,
     "db_path": "leads.db"
   },
   "jobs": [
@@ -98,8 +113,11 @@ python main.py
 
 | 필드 | 설명 |
 |---|---|
-| `delay_seconds` | API 호출 사이 대기 시간(초) |
-| `max_pages_per_keyword` | 검색어 하나당 최대 페이지 수 (페이지당 최대 15개) |
+| `source` | 수집 소스: `naver_map`(브라우저 자동화) 또는 `kakao`(API). 미지정 시 `kakao` |
+| `headless` | (naver_map 전용) `false`면 브라우저 창이 보이게 실행 |
+| `delay_seconds` | 요청/동작 사이 대기 시간(초). 너무 빠른 수집 방지 |
+| `scroll_count` | (naver_map 전용) 검색 결과 목록 최대 스크롤 횟수 |
+| `max_pages_per_keyword` | (kakao 전용) 검색어 하나당 최대 페이지 수 (페이지당 최대 15개) |
 | `require_phone` | `true`면 전화번호 없는 매장은 제외 |
 | `output_dir` | 엑셀/로그 저장 폴더 |
 | `export_only_new` | `true`면 이미 DB에 있던 기존 리드는 엑셀에서 제외(신규만 출력) |
@@ -156,9 +174,10 @@ numbering/
 ├─ requirements.txt
 ├─ README.md
 ├─ DEVELOPMENT_PLAN.md
-├─ main.py               # 실행 진입점 / 전체 흐름 제어
+├─ main.py               # 실행 진입점 / 소스 선택 / 전체 흐름 제어
 ├─ keyword_generator.py  # 지역+업종 검색 키워드 생성
-├─ kakao_client.py       # Kakao Local API 클라이언트
+├─ kakao_client.py       # Kakao Local API 클라이언트 (source=kakao)
+├─ naver_map_client.py   # 네이버 지도 Playwright 수집기 (source=naver_map)
 ├─ dedupe.py             # 중복 제거
 ├─ database.py           # SQLite 저장 / upsert / status 관리
 ├─ excel_exporter.py     # 엑셀 생성
@@ -169,7 +188,11 @@ numbering/
 
 ## 주의사항
 
-- 화면 크롤링은 하지 않습니다. 공식 API만 사용합니다.
+- 수집 방식은 `source`로 선택합니다. `kakao`는 공식 API, `naver_map`은
+  네이버 지도 브라우저 자동화입니다.
+- `naver_map`은 네이버 약관/DOM 변경에 영향을 받을 수 있으므로 과도한 수집을
+  피하고 `delay_seconds`를 충분히 두세요. 셀렉터 변경 시 `naver_map_client.py`
+  의 `*_SELECTORS`를 갱신합니다.
 - 전화번호는 숫자가 깨지지 않도록 엑셀에서 문자열로 저장됩니다.
-- 특정 작업이 실패해도 전체 실행은 중단되지 않습니다.
+- 특정 작업/매장 수집이 실패해도 전체 실행은 중단되지 않고 로그만 남깁니다.
 - `.env`와 `config.json`은 `.gitignore`에 포함되어 커밋되지 않습니다.

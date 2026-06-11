@@ -1,10 +1,13 @@
 {
   "settings": {
-    "delay_seconds": 0.25,
+    "source": "naver_map",
+    "headless": false,
+    "delay_seconds": 1.0,
+    "scroll_count": 30,
     "max_pages_per_keyword": 3,
-    "require_phone": false,
+    "require_phone": true,
+    "export_only_new": true,
     "output_dir": "output",
-    "export_only_new": false,
     "db_path": "leads.db"
   },
   "jobs": [
