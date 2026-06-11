@@ -88,22 +88,55 @@ def load_config(path: str = CONFIG_PATH) -> dict:
         sys.exit(1)
 
 
+def _classify_phone(phone: str) -> tuple[str, str]:
+    """전화번호를 (안심번호, 일반전화번호)로 분리한다.
+
+    0507로 시작하는 번호는 네이버 안심번호(가상번호)이므로 안심번호로,
+    그 외 실제 전화번호는 일반전화번호로 분류한다.
+    """
+    digits = normalize_phone(phone)
+    if digits.startswith("0507"):
+        return phone, ""
+    if phone:
+        return "", phone
+    return "", ""
+
+
 def normalize_record(place: dict, region: str, business_type: str, keyword: str) -> dict:
     """공통 place 스키마 1건을 내부 표준 레코드로 변환한다.
 
-    place 키: place_name, phone, address, category, place_url
+    place 키: place_name, phone, address, category, place_url,
+              homepage_url, instagram_url
     (Kakao/네이버 어떤 수집기든 동일한 공통 스키마로 들어온다.)
     """
+    phone = place.get("phone", "") or ""
+    safe_phone, normal_phone = _classify_phone(phone)
+
+    homepage = (place.get("homepage_url", "") or "").strip()
+    instagram = (place.get("instagram_url", "") or "").strip()
+    # 홈페이지로 인스타그램 주소가 잡힌 경우 인스타그램 칸으로 옮긴다.
+    if not instagram and "instagram.com" in homepage.lower():
+        instagram, homepage = homepage, ""
+
+    place_url = (place.get("place_url", "") or "").strip()
+    # 네이버 플레이스 링크만 별도 컬럼에 저장(카카오 링크는 제외).
+    naver_place = place_url if ("naver." in place_url.lower()) else ""
+
     return {
         "수집일": date.today().isoformat(),
         "지역": region,
         "업종": business_type,
         "검색키워드": keyword,
         "매장명": place.get("place_name", ""),
-        "전화번호": place.get("phone", ""),
+        "전화번호": phone,
+        "안심번호": safe_phone,
+        "일반전화번호": normal_phone,
         "주소": place.get("address", ""),
         "카테고리": place.get("category", ""),
-        "지도URL": place.get("place_url", ""),
+        "네이버플레이스": naver_place,
+        "홈페이지": homepage,
+        "인스타그램": instagram,
+        "지도URL": place_url,
         "status": "NEW",
         "영업상태": "미접촉",
         "메모": "",

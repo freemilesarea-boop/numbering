@@ -49,7 +49,7 @@ def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """leads 테이블을 생성한다(없을 때만)."""
+    """leads 테이블을 생성한다(없을 때만) + 누락 컬럼을 보강한다."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS leads (
@@ -63,6 +63,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             address             TEXT,
             category            TEXT,
             place_url           TEXT,
+            homepage_url        TEXT DEFAULT '',
+            instagram_url       TEXT DEFAULT '',
             status              TEXT NOT NULL DEFAULT 'NEW',
             memo                TEXT DEFAULT '',
             last_contact_date   TEXT DEFAULT '',
@@ -73,7 +75,17 @@ def init_db(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # 기존 leads.db 호환: 새로 추가된 컬럼이 없으면 ALTER로 보강한다.
+    _ensure_column(conn, "homepage_url")
+    _ensure_column(conn, "instagram_url")
     conn.commit()
+
+
+def _ensure_column(conn: sqlite3.Connection, name: str) -> None:
+    """leads 테이블에 컬럼이 없으면 추가한다(기존 DB 마이그레이션)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(leads)").fetchall()]
+    if name not in cols:
+        conn.execute(f"ALTER TABLE leads ADD COLUMN {name} TEXT DEFAULT ''")
 
 
 def upsert_lead(conn: sqlite3.Connection, record: dict) -> UpsertResult:
@@ -105,6 +117,8 @@ def upsert_lead(conn: sqlite3.Connection, record: dict) -> UpsertResult:
                    address = ?,
                    category = ?,
                    place_url = ?,
+                   homepage_url = ?,
+                   instagram_url = ?,
                    last_collected_at = ?
              WHERE dedupe_key = ?
             """,
@@ -117,6 +131,8 @@ def upsert_lead(conn: sqlite3.Connection, record: dict) -> UpsertResult:
                 record.get("주소", ""),
                 record.get("카테고리", ""),
                 record.get("지도URL", ""),
+                record.get("홈페이지", ""),
+                record.get("인스타그램", ""),
                 now,
                 key,
             ),
@@ -130,8 +146,9 @@ def upsert_lead(conn: sqlite3.Connection, record: dict) -> UpsertResult:
         INSERT INTO leads (
             dedupe_key, region, business_type, search_keyword,
             place_name, phone, address, category, place_url,
+            homepage_url, instagram_url,
             status, first_collected_at, last_collected_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             key,
@@ -143,6 +160,8 @@ def upsert_lead(conn: sqlite3.Connection, record: dict) -> UpsertResult:
             record.get("주소", ""),
             record.get("카테고리", ""),
             record.get("지도URL", ""),
+            record.get("홈페이지", ""),
+            record.get("인스타그램", ""),
             STATUS_NEW,
             now,
             now,

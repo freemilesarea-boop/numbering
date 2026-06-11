@@ -84,13 +84,18 @@ class KakaoClient:
 
     @staticmethod
     def _to_place(doc: dict) -> dict:
-        """Kakao 응답 1건을 공통 place 스키마로 변환한다."""
+        """Kakao 응답 1건을 공통 place 스키마로 변환한다.
+
+        Kakao Local API는 홈페이지/인스타그램을 제공하지 않으므로 빈 값으로 둔다.
+        """
         return {
             "place_name": doc.get("place_name", ""),
             "phone": doc.get("phone", ""),
             "address": doc.get("road_address_name") or doc.get("address_name", ""),
             "category": doc.get("category_name", ""),
             "place_url": doc.get("place_url", ""),
+            "homepage_url": "",
+            "instagram_url": "",
         }
 
     def collect_places(

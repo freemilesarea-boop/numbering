@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 
 from dedupe import normalize_phone
 
-# 엑셀 컬럼 순서(계획서 12절 기준).
+# 엑셀 컬럼 순서.
 COLUMNS = [
     "수집일",
     "지역",
@@ -25,8 +25,13 @@ COLUMNS = [
     "검색키워드",
     "매장명",
     "전화번호",
+    "안심번호",
+    "일반전화번호",
     "주소",
     "카테고리",
+    "네이버플레이스",
+    "홈페이지",
+    "인스타그램",
     "지도URL",
     "status",
     "영업상태",
@@ -37,9 +42,9 @@ COLUMNS = [
 ]
 
 # 전화번호처럼 항상 문자열로 유지해야 하는 컬럼.
-_TEXT_COLUMNS = {"전화번호"}
+_TEXT_COLUMNS = {"전화번호", "안심번호", "일반전화번호"}
 # 하이퍼링크로 처리할 컬럼.
-_LINK_COLUMNS = {"지도URL"}
+_LINK_COLUMNS = {"네이버플레이스", "홈페이지", "인스타그램", "지도URL"}
 
 _HEADER_FONT = Font(bold=True)
 _LINK_FONT = Font(color="0563C1", underline="single")

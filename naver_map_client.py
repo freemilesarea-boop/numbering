@@ -58,6 +58,20 @@ DETAIL_CATEGORY_SELECTORS = ["span.lnJFt", "span.DJJvD"]
 DETAIL_ADDRESS_SELECTORS = ["span.LDgIH", "div.PkgBl span", "a.PkgBl"]
 DETAIL_PHONE_SELECTORS = ["span.xlx7Q", "div.O8qbU span.xlx7Q"]
 
+# 홈페이지 후보에서 제외할 호스트(네이버 내부/정적 리소스/인스타 외 소셜).
+HOMEPAGE_EXCLUDE_HOSTS = [
+    "naver.com",
+    "naver.me",
+    "pstatic.net",
+    "map.naver",
+    "booking.naver",
+    "pcmap",
+    "facebook.com",
+    "youtube.com",
+    "youtu.be",
+    "blog.naver",
+]
+
 # 프레임/요소 대기 타임아웃(ms).
 FRAME_TIMEOUT = 15000
 SHORT_TIMEOUT = 4000
@@ -171,9 +185,48 @@ class NaverMapClient:
         except Exception:
             pass
 
+    def _extract_links(self, entry) -> tuple[str, str]:
+        """상세 패널의 외부 링크에서 (홈페이지, 인스타그램) URL을 추출한다.
+
+        네이버 내부/예약/소셜(인스타 제외) 링크는 홈페이지 후보에서 제외한다.
+        instagram.com 링크는 인스타그램으로 분류한다.
+        """
+        homepage, instagram = "", ""
+        try:
+            links = entry.locator("a[href^='http']")
+            count = min(links.count(), 40)
+        except Exception:
+            return homepage, instagram
+
+        for i in range(count):
+            try:
+                href = links.nth(i).get_attribute("href", timeout=SHORT_TIMEOUT) or ""
+            except Exception:
+                continue
+            if not href:
+                continue
+            low = href.lower()
+            if "instagram.com" in low:
+                if not instagram:
+                    instagram = href
+                continue
+            # 홈페이지 후보: 네이버 내부/정적 리소스/기타 소셜은 제외
+            if any(bad in low for bad in HOMEPAGE_EXCLUDE_HOSTS):
+                continue
+            if not homepage:
+                homepage = href
+        return homepage, instagram
+
     def _extract_detail(self, log) -> dict:
-        """상세 패널(entryIframe)에서 매장명/카테고리/주소/전화번호를 추출."""
-        detail = {"place_name": "", "category": "", "address": "", "phone": ""}
+        """상세 패널(entryIframe)에서 매장명/카테고리/주소/전화번호/링크를 추출."""
+        detail = {
+            "place_name": "",
+            "category": "",
+            "address": "",
+            "phone": "",
+            "homepage_url": "",
+            "instagram_url": "",
+        }
         page = self._page
         try:
             page.wait_for_selector(ENTRY_IFRAME, timeout=FRAME_TIMEOUT)
@@ -196,6 +249,8 @@ class NaverMapClient:
             except Exception:
                 pass
         detail["phone"] = phone
+
+        detail["homepage_url"], detail["instagram_url"] = self._extract_links(entry)
         return detail
 
     # ---- 메인 수집 ---------------------------------------------------------
@@ -267,9 +322,11 @@ class NaverMapClient:
                     "address": "",
                     "category": category,
                     "place_url": "",
+                    "homepage_url": "",
+                    "instagram_url": "",
                 }
 
-                # 상세 패널 진입 → 전화번호/주소 추출
+                # 상세 패널 진입 → 전화번호/주소/링크 추출
                 try:
                     link = item.locator(
                         ", ".join(LIST_NAME_SELECTORS)
@@ -283,7 +340,9 @@ class NaverMapClient:
                     place["category"] = detail["category"] or category
                     place["address"] = detail["address"]
                     place["phone"] = detail["phone"]
-                    # 클릭 후 URL이 곧 네이버 지도 매장 URL
+                    place["homepage_url"] = detail["homepage_url"]
+                    place["instagram_url"] = detail["instagram_url"]
+                    # 클릭 후 URL이 곧 네이버 플레이스 매장 URL
                     if "/place/" in (page.url or ""):
                         place["place_url"] = page.url
                 except Exception as exc:
