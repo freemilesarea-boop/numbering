@@ -31,21 +31,47 @@ GET https://dapi.kakao.com/v2/local/search/keyword.json
 # 1. 패키지 설치
 pip install -r requirements.txt
 
-# 2. 환경변수 파일 생성
+# 2. 환경변수 파일 생성 (.env.example을 복사)
 cp .env.example .env
 
-# 3. .env에 카카오 REST API 키 입력
-#    KAKAO_REST_API_KEY=실제_키
-
-# 4. 설정 파일 생성
+# 3. 설정 파일 생성
 cp config.example.json config.json
 
-# 5. 실행
+# 4. 실행
 python main.py
 ```
 
-> 카카오 REST API 키는 [Kakao Developers](https://developers.kakao.com)에서
-> 애플리케이션을 만든 뒤 **REST API 키**를 발급받아 사용합니다.
+### `.env` 설정 (필수)
+
+카카오 REST API 키는 **반드시 `.env` 파일**을 통해 주입합니다. 키를 코드나
+`config.json`에 직접 넣지 마세요. (`.env`는 `.gitignore`에 등록되어 커밋되지
+않습니다.)
+
+1. 예시 파일을 복사합니다.
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. 복사된 `.env`를 열고 발급받은 실제 키로 값을 바꿉니다.
+
+   `.env.example` (복사 전, 그대로 두기):
+
+   ```env
+   KAKAO_REST_API_KEY=your_kakao_rest_api_key_here
+   ```
+
+   `.env` (복사 후, 실제 키로 교체):
+
+   ```env
+   KAKAO_REST_API_KEY=a1b2c3d4e5f6...   # 본인의 실제 REST API 키
+   ```
+
+3. 키 발급: [Kakao Developers](https://developers.kakao.com) → 애플리케이션
+   추가 → **앱 키 > REST API 키**를 복사해 위 `.env`에 붙여넣습니다.
+
+> 키가 비어 있거나 잘못되면 실행 시 `KAKAO_REST_API_KEY가 설정되지 않았습니다`
+> 또는 `인증 실패(401)` 메시지가 출력됩니다.
 
 ## 설정 파일 (`config.json`)
 
