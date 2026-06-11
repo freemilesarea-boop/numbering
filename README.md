@@ -55,7 +55,9 @@ python main.py
     "delay_seconds": 0.25,
     "max_pages_per_keyword": 3,
     "require_phone": false,
-    "output_dir": "output"
+    "output_dir": "output",
+    "export_only_new": false,
+    "db_path": "leads.db"
   },
   "jobs": [
     {
@@ -74,6 +76,8 @@ python main.py
 | `max_pages_per_keyword` | 검색어 하나당 최대 페이지 수 (페이지당 최대 15개) |
 | `require_phone` | `true`면 전화번호 없는 매장은 제외 |
 | `output_dir` | 엑셀/로그 저장 폴더 |
+| `export_only_new` | `true`면 이미 DB에 있던 기존 리드는 엑셀에서 제외(신규만 출력) |
+| `db_path` | SQLite DB 파일 경로 (기본 `leads.db`) |
 | `jobs` | 수집 작업 목록 |
 | `region` | 지역명 |
 | `business_type` | 업종명 |
@@ -94,6 +98,29 @@ python main.py
 1. **전화번호** 기준 (숫자만 추출 후 비교)
 2. 전화번호가 없으면 **매장명 + 주소** 정규화 후 비교
 
+## SQLite 영속 저장 (`leads.db`)
+
+수집한 매장은 `leads.db`의 `leads` 테이블에 **upsert**됩니다.
+
+- 동일 리드 판정 기준은 위 중복 제거 기준과 같습니다(전화번호 → 매장명+주소).
+- `first_collected_at` / `last_collected_at`으로 최초·최근 수집 시각을 추적합니다.
+- 같은 리드를 다시 수집해도 중복 삽입되지 않고 `last_collected_at`만 갱신됩니다.
+
+### 영업상태 (`status`)
+
+각 리드는 영업상태(`status`)를 가지며 DB에 영속 저장됩니다. 엑셀에도 `status`
+컬럼으로 출력됩니다.
+
+- 기본값: `NEW`
+- 가능한 값: `NEW`, `CONTACTED`, `INTERESTED`, `TRIAL`, `CUSTOMER`, `REJECTED`
+- DB에서 `status`를 바꾸면 다음 수집/엑셀에도 그 값이 그대로 유지됩니다.
+
+### 기존 리드 제외 (`export_only_new`)
+
+`settings.export_only_new`를 `true`로 두면 이미 DB에 있던 기존 리드는 엑셀에서
+제외하고 이번에 새로 발견된 리드만 출력합니다. `false`면 전체를 출력합니다.
+(DB에는 두 경우 모두 저장됩니다.)
+
 ## 프로젝트 구조
 
 ```
@@ -107,8 +134,10 @@ numbering/
 ├─ keyword_generator.py  # 지역+업종 검색 키워드 생성
 ├─ kakao_client.py       # Kakao Local API 클라이언트
 ├─ dedupe.py             # 중복 제거
+├─ database.py           # SQLite 저장 / upsert / status 관리
 ├─ excel_exporter.py     # 엑셀 생성
 ├─ logger.py             # 실행 로그
+├─ leads.db              # SQLite 리드 영속 저장소(실행 시 생성, git 제외)
 └─ output/               # 엑셀/로그 산출물
 ```
 

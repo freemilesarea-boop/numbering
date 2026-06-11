@@ -3,7 +3,9 @@
     "delay_seconds": 0.25,
     "max_pages_per_keyword": 3,
     "require_phone": false,
-    "output_dir": "output"
+    "output_dir": "output",
+    "export_only_new": false,
+    "db_path": "leads.db"
   },
   "jobs": [
     {

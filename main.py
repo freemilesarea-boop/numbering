@@ -16,6 +16,7 @@ from datetime import date
 
 from dotenv import load_dotenv
 
+import database
 from dedupe import dedupe, normalize_phone
 from excel_exporter import export_to_excel
 from kakao_client import KakaoApiError, KakaoClient
@@ -54,6 +55,7 @@ def normalize_record(doc: dict, region: str, business_type: str, keyword: str) -
         "주소": doc.get("road_address_name") or doc.get("address_name", ""),
         "카테고리": doc.get("category_name", ""),
         "지도URL": doc.get("place_url", ""),
+        "status": "NEW",
         "영업상태": "미접촉",
         "메모": "",
         "최근연락일": "",
@@ -62,7 +64,7 @@ def normalize_record(doc: dict, region: str, business_type: str, keyword: str) -
     }
 
 
-def run_job(job: dict, settings: dict, client: KakaoClient, log) -> bool:
+def run_job(job: dict, settings: dict, client: KakaoClient, conn, log) -> bool:
     """단일 job을 실행한다. 성공하면 True, 실패하면 False를 반환한다."""
     region = job.get("region", "").strip()
     business_type = job.get("business_type", "").strip()
@@ -77,6 +79,7 @@ def run_job(job: dict, settings: dict, client: KakaoClient, log) -> bool:
     delay_seconds = float(settings.get("delay_seconds", 0.25) or 0)
     require_phone = bool(settings.get("require_phone", False))
     output_dir = settings.get("output_dir", "output")
+    export_only_new = bool(settings.get("export_only_new", False))
 
     keywords = generate_keywords(region, business_type, extra_keywords)
 
@@ -111,8 +114,40 @@ def run_job(job: dict, settings: dict, client: KakaoClient, log) -> bool:
 
     deduped, stats = dedupe(collected)
 
+    # DB upsert: 신규/기존 판별 + DB에 영속 저장된 status 반영
+    new_count = 0
+    existing_count = 0
+    for record in deduped:
+        result = database.upsert_lead(conn, record)
+        record["status"] = result.status  # DB의 영속 status를 엑셀에 반영
+        record["_is_new"] = result.is_new  # 내부 플래그(엑셀에는 출력 안 됨)
+        if result.is_new:
+            new_count += 1
+        else:
+            existing_count += 1
+
+    stats["new_count"] = new_count
+    stats["existing_count"] = existing_count
+
+    # export_only_new=true면 기존 리드는 엑셀에서 제외
+    if export_only_new:
+        export_records = [r for r in deduped if r.get("_is_new")]
+    else:
+        export_records = deduped
+
+    if not export_records:
+        log.log("")
+        log.log(f"원본 수집 수: {stats['original_count']}")
+        log.log(f"중복 제거 수: {stats['removed_count']}")
+        log.log(f"최종 저장 수: {stats['final_count']}")
+        log.log(f"신규 리드: {new_count} / 기존 리드: {existing_count}")
+        log.log("  - 엑셀로 내보낼 신규 리드가 없습니다. (export_only_new=true)")
+        return True
+
     try:
-        path = export_to_excel(deduped, stats, region, business_type, output_dir)
+        path = export_to_excel(
+            export_records, stats, region, business_type, output_dir
+        )
     except Exception as exc:  # 엑셀 저장 실패도 작업 단위 실패로 처리
         log.log(f"  - [실패] 엑셀 저장 중 오류: {exc}")
         return False
@@ -121,6 +156,9 @@ def run_job(job: dict, settings: dict, client: KakaoClient, log) -> bool:
     log.log(f"원본 수집 수: {stats['original_count']}")
     log.log(f"중복 제거 수: {stats['removed_count']}")
     log.log(f"최종 저장 수: {stats['final_count']}")
+    log.log(f"신규 리드: {new_count} / 기존 리드: {existing_count}")
+    if export_only_new:
+        log.log(f"엑셀 출력(신규만): {len(export_records)}개")
     log.log(f"전화번호 있음: {stats['with_phone']}")
     log.log(f"전화번호 없음: {stats['without_phone']}")
     log.log(f"저장 파일: {path}")
@@ -157,17 +195,24 @@ def main() -> None:
         log.flush()
         sys.exit(0)
 
+    # SQLite 연결 (leads.db / leads 테이블 보장)
+    db_path = settings.get("db_path", database.DEFAULT_DB_PATH)
+    conn = database.connect(db_path)
+
     success_count = 0
-    for idx, job in enumerate(jobs, start=1):
-        region = job.get("region", "?")
-        business_type = job.get("business_type", "?")
-        log.log("")
-        log.log(f"[{idx}/{len(jobs)}] {region} {business_type} 수집 시작")
-        try:
-            if run_job(job, settings, client, log):
-                success_count += 1
-        except Exception as exc:  # 특정 job 실패가 전체를 막지 않도록
-            log.log(f"  - [실패] 작업 처리 중 예기치 못한 오류: {exc}")
+    try:
+        for idx, job in enumerate(jobs, start=1):
+            region = job.get("region", "?")
+            business_type = job.get("business_type", "?")
+            log.log("")
+            log.log(f"[{idx}/{len(jobs)}] {region} {business_type} 수집 시작")
+            try:
+                if run_job(job, settings, client, conn, log):
+                    success_count += 1
+            except Exception as exc:  # 특정 job 실패가 전체를 막지 않도록
+                log.log(f"  - [실패] 작업 처리 중 예기치 못한 오류: {exc}")
+    finally:
+        conn.close()
 
     log.log("")
     log.log(f"전체 작업 완료 (성공 {success_count}/{len(jobs)})")

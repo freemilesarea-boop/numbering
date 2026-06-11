@@ -6,6 +6,11 @@ config.json
 output/*
 !output/.gitkeep
 
+# SQLite DB (로컬 리드 영속 저장소)
+*.db
+*.sqlite
+*.sqlite3
+
 # Python
 __pycache__/
 *.py[cod]
