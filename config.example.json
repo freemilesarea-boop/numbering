@@ -1,0 +1,22 @@
+{
+  "settings": {
+    "delay_seconds": 0.25,
+    "max_pages_per_keyword": 3,
+    "require_phone": false,
+    "output_dir": "output"
+  },
+  "jobs": [
+    {
+      "region": "성수",
+      "business_type": "카페",
+      "target_count": 300,
+      "extra_keywords": ["성수동 카페", "서울숲 카페", "뚝섬 카페"]
+    },
+    {
+      "region": "강남",
+      "business_type": "필라테스",
+      "target_count": 200,
+      "extra_keywords": ["강남역 필라테스", "역삼 필라테스", "신논현 필라테스"]
+    }
+  ]
+}
