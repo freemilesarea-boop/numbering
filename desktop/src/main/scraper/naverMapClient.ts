@@ -49,6 +49,16 @@ const LIST_ITEM_SELECTORS = [
 // 목록 카드에서 매장명(상세 진입용).
 const LIST_NAME_SELECTORS = ['span.YwYLL', 'span.TYaxT', 'span.place_bluelink', 'a span']
 
+// 검색 결과 목록 하단의 "다음페이지" 버튼 후보(여러 전략으로 시도).
+// 텍스트 기반(place_blind "다음페이지")이 가장 안정적이고, 클래스 기반은 폴백.
+const NEXT_PAGE_SELECTORS = [
+  'a:has(span.place_blind:text-is("다음페이지"))',
+  'button:has(span.place_blind:text-is("다음페이지"))',
+  'a.eUTV2',
+  'a:has-text("다음페이지")',
+  'button:has-text("다음페이지")'
+]
+
 // 상세 패널(entryIframe)에서의 필드 후보.
 const DETAIL_NAME_SELECTORS = ['span.GHAhO', '#_title span', 'div.zD5Nm span.GHAhO']
 const DETAIL_ADDRESS_SELECTORS = ['span.LDgIH', 'div.PkgBl span', 'a.PkgBl']
@@ -65,6 +75,8 @@ const DETAIL_LINK_AREA_SELECTORS = [
 // 프레임/요소 대기 타임아웃(ms).
 const FRAME_TIMEOUT = 15000
 const SHORT_TIMEOUT = 4000
+// 상세 패널 전환/로딩 대기 상한(ms). 항목 단위라 너무 길면 전체가 느려진다.
+const DETAIL_WAIT_TIMEOUT = 8000
 
 /** 수집 중 복구 불가능한 일반 오류. */
 export class NaverMapError extends Error {}
@@ -340,6 +352,43 @@ export class NaverMapClient {
     }
   }
 
+  /** 상세 패널의 이름이 보일 때까지(=새 매장이 로드될 때까지) 대기한다. */
+  private async waitForDetailReady(entry: FrameLocator): Promise<boolean> {
+    const deadline = Date.now() + DETAIL_WAIT_TIMEOUT
+    while (Date.now() < deadline) {
+      for (const sel of DETAIL_NAME_SELECTORS) {
+        try {
+          const loc = entry.locator(sel).first()
+          if ((await loc.count()) > 0) {
+            const t = ((await loc.innerText({ timeout: SHORT_TIMEOUT })) || '').trim()
+            if (t) return true
+          }
+        } catch {
+          /* 아직 로딩 중 */
+        }
+      }
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    return false
+  }
+
+  /**
+   * 필드를 여러 번 재시도하며 읽는다. 상세 패널이 떠도 전화번호/주소가
+   * 이름보다 살짝 늦게 채워지는 경우가 있어, 짧게 폴링해 누락을 줄인다.
+   */
+  private static async readWithRetry(
+    entry: FrameLocator,
+    selectors: string[],
+    attempts = 5
+  ): Promise<string> {
+    for (let i = 0; i < attempts; i++) {
+      const text = await NaverMapClient.firstText(entry, selectors)
+      if (text) return text
+      await new Promise((r) => setTimeout(r, 300))
+    }
+    return ''
+  }
+
   /** 상세 패널(entryIframe)에서 매장명/주소/전화번호/링크를 추출. */
   private async extractDetail(
     log: CollectControl['log'],
@@ -362,10 +411,13 @@ export class NaverMapClient {
     }
 
     const entry = page.frameLocator(ENTRY_IFRAME)
-    detail.placeName = await NaverMapClient.firstText(entry, DETAIL_NAME_SELECTORS)
-    detail.address = await NaverMapClient.firstText(entry, DETAIL_ADDRESS_SELECTORS)
+    // 새 매장 패널이 실제로 로드될 때까지 대기(이름 노출 기준).
+    await this.waitForDetailReady(entry)
 
-    let phone = await NaverMapClient.firstText(entry, DETAIL_PHONE_SELECTORS)
+    detail.placeName = await NaverMapClient.firstText(entry, DETAIL_NAME_SELECTORS)
+    detail.address = await NaverMapClient.readWithRetry(entry, DETAIL_ADDRESS_SELECTORS)
+
+    let phone = await NaverMapClient.readWithRetry(entry, DETAIL_PHONE_SELECTORS)
     if (!phone) {
       // tel: 링크 폴백
       try {
@@ -429,9 +481,38 @@ export class NaverMapClient {
 
     const search = page.frameLocator(SEARCH_IFRAME)
 
-    let processed = 0 // 이미 처리한 li 인덱스 수
+    const maxPages = 200 // 페이지 안전 상한(목표 도달/중단/소진 중 먼저 만나면 종료)
+    for (let pageNo = 1; pageNo <= maxPages; pageNo++) {
+      if (control.shouldStop()) return
+
+      control.log(`  [페이지 ${pageNo}] 목록 수집 중…`, 'info')
+      await this.processListPage(search, control, regionHint)
+      if (control.shouldStop()) return
+
+      // 현재 페이지를 모두 처리했으면 다음 페이지로 이동 시도.
+      const moved = await this.goToNextPage(search, control)
+      if (!moved) {
+        control.log('  더 이상 페이지가 없습니다. 수집을 종료합니다.', 'info')
+        break
+      }
+    }
+  }
+
+  /**
+   * 현재 검색 결과 페이지의 목록을 끝까지 스크롤하며 각 매장을 처리한다.
+   * 새 항목이 더 이상 로드되지 않으면(=페이지 소진) 반환한다.
+   */
+  private async processListPage(
+    search: FrameLocator,
+    control: CollectControl,
+    regionHint: string
+  ): Promise<void> {
+    const page = this.page
+    if (!page) return
+
+    let processed = 0
     let emptyRounds = 0
-    const maxScroll = 200 // 안전 상한(목표 도달/중단/소진 중 먼저 만나면 종료)
+    const maxScroll = 60
 
     for (let round = 0; round < maxScroll; round++) {
       if (control.shouldStop()) return
@@ -466,10 +547,13 @@ export class NaverMapClient {
 
         // 상세 패널 진입 → 전화번호/주소/링크 추출
         try {
+          const prevUrl = page.url() || ''
           let link: Locator = item.locator(LIST_NAME_SELECTORS.join(', ')).first()
           if ((await link.count()) === 0) link = item
+          await link.scrollIntoViewIfNeeded({ timeout: SHORT_TIMEOUT }).catch(() => {})
           await link.click({ timeout: SHORT_TIMEOUT })
-          await this.sleep()
+          // 클릭한 매장으로 상세가 실제로 바뀔 때까지 대기(이전 매장 정보 오독 방지).
+          await this.waitForPlaceChange(prevUrl)
           await this.assertNotBlocked()
 
           const detail = await this.extractDetail(control.log, regionHint)
@@ -496,10 +580,10 @@ export class NaverMapClient {
 
       processed = total
 
-      // 더 이상 새 항목이 없으면 몇 번 더 시도하다 종료
+      // 더 이상 새 항목이 없으면 몇 번 더 시도하다 종료(페이지 소진).
       if (newInRound === 0) {
         emptyRounds += 1
-        if (emptyRounds >= 3) break
+        if (emptyRounds >= 3) return
       } else {
         emptyRounds = 0
       }
@@ -507,5 +591,53 @@ export class NaverMapClient {
       await this.scrollList(search)
       await this.sleep()
     }
+  }
+
+  /**
+   * 리스트 항목 클릭 후, 상세(/place/{id}) URL이 이전과 다르게 바뀔 때까지 대기.
+   * 이전 매장의 패널을 그대로 읽어 전화번호/주소가 비거나 어긋나는 것을 막는다.
+   */
+  private async waitForPlaceChange(prevUrl: string): Promise<void> {
+    const page = this.page
+    if (!page) return
+    const deadline = Date.now() + DETAIL_WAIT_TIMEOUT
+    while (Date.now() < deadline) {
+      const u = page.url() || ''
+      if (u !== prevUrl && u.includes('/place/')) return
+      await new Promise((r) => setTimeout(r, 150))
+    }
+  }
+
+  /**
+   * 검색 결과 목록의 "다음페이지" 버튼을 찾아 클릭한다.
+   * 이동했으면 true, 다음 페이지가 없거나 비활성(마지막 페이지)이면 false.
+   */
+  private async goToNextPage(search: FrameLocator, control: CollectControl): Promise<boolean> {
+    for (const sel of NEXT_PAGE_SELECTORS) {
+      let btn: Locator
+      try {
+        btn = search.locator(sel).last()
+        if ((await btn.count()) === 0) continue
+      } catch {
+        continue
+      }
+      // 마지막 페이지에서는 aria-disabled="true"로 표시된다.
+      const ariaDisabled = await btn.getAttribute('aria-disabled').catch(() => null)
+      const domDisabled = await btn.isDisabled().catch(() => false)
+      if (ariaDisabled === 'true' || domDisabled) return false
+
+      try {
+        await btn.scrollIntoViewIfNeeded({ timeout: SHORT_TIMEOUT }).catch(() => {})
+        await btn.click({ timeout: SHORT_TIMEOUT })
+        await this.sleep()
+        await this.assertNotBlocked()
+        // 새 페이지 목록이 그려질 시간을 잠시 더 준다.
+        await new Promise((r) => setTimeout(r, 600))
+        return true
+      } catch {
+        continue
+      }
+    }
+    return false
   }
 }
