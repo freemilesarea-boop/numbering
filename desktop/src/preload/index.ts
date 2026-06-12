@@ -42,6 +42,7 @@ const api = {
   onProgress: (cb: (p: Progress) => void) => on<Progress>('collection:progress', cb),
   onStatus: (cb: (s: CollectionStatus) => void) => on<CollectionStatus>('collection:status', cb),
   onCaptcha: (cb: (message: string) => void) => on<string>('collection:captcha', cb),
+  onError: (cb: (message: string) => void) => on<string>('collection:error', cb),
   onReset: (cb: () => void) => on<null>('collection:reset', () => cb())
 }
 

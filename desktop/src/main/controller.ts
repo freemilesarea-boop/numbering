@@ -13,7 +13,12 @@ import type {
   LogLevel,
   SearchConfig
 } from '../shared/types'
-import { CaptchaError, NaverMapClient, type CollectControl } from './scraper/naverMapClient'
+import {
+  BrowserLaunchError,
+  CaptchaError,
+  NaverMapClient,
+  type CollectControl
+} from './scraper/naverMapClient'
 import { dedupeKey } from './scraper/dedupe'
 import { StateStore } from './store/stateStore'
 
@@ -170,8 +175,15 @@ export class CollectionController {
         this.addLog(`[중단] ${err.message} 잠시 후 다시 시도하거나 브라우저에서 직접 확인해 주세요.`, 'error')
         this.send('collection:captcha', err.message)
         this.setStatus('captcha')
+      } else if (err instanceof BrowserLaunchError) {
+        // Chromium 미설치 등: 사용자에게 설치 안내를 명확히 보여준다.
+        for (const line of err.message.split('\n')) this.addLog(line, 'error')
+        this.send('collection:error', err.message)
+        this.setStatus('error')
       } else {
-        this.addLog(`[오류] 수집 중 예기치 못한 오류: ${(err as Error).message}`, 'error')
+        const msg = `수집 중 예기치 못한 오류: ${(err as Error).message}`
+        this.addLog(`[오류] ${msg}`, 'error')
+        this.send('collection:error', msg)
         this.setStatus('error')
       }
     } finally {

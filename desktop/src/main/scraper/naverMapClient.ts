@@ -72,6 +72,9 @@ export class NaverMapError extends Error {}
 /** CAPTCHA / 로그인 요구 화면 감지 시 던지는 오류. */
 export class CaptchaError extends Error {}
 
+/** Chromium 브라우저 실행 실패(미설치 등) 시 던지는 오류. */
+export class BrowserLaunchError extends Error {}
+
 /** 수집 진행을 외부(컨트롤러)에서 제어/관찰하기 위한 인터페이스. */
 export interface CollectControl {
   /** 중단 요청 여부. true면 수집 루프를 즉시 빠져나간다. */
@@ -108,7 +111,24 @@ export class NaverMapClient {
   // ---- 생명주기 ----------------------------------------------------------
 
   async start(): Promise<void> {
-    this.pw = await chromium.launch({ headless: this.config.headless })
+    try {
+      this.pw = await chromium.launch({ headless: this.config.headless })
+    } catch (err) {
+      const msg = (err as Error).message || ''
+      // Playwright는 브라우저가 없을 때 "Executable doesn't exist" 등을 던진다.
+      if (
+        /executable doesn'?t exist/i.test(msg) ||
+        /playwright install/i.test(msg) ||
+        /browserType\.launch/i.test(msg)
+      ) {
+        throw new BrowserLaunchError(
+          'Chromium 브라우저가 설치되어 있지 않거나 실행할 수 없습니다.\n' +
+            'desktop 폴더에서 아래 명령으로 브라우저를 설치한 뒤 다시 시도해 주세요:\n' +
+            '  npx playwright install chromium'
+        )
+      }
+      throw new BrowserLaunchError(`브라우저 실행 실패: ${msg}`)
+    }
     this.context = await this.pw.newContext({
       locale: 'ko-KR',
       userAgent:

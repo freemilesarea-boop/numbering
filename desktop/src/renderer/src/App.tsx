@@ -46,7 +46,10 @@ export default function App(): JSX.Element {
       setProgress(snap.progress)
       if (snap.config) setConfig(snap.config)
       if (snap.places.length > 0) {
-        setNotice(`이전 세션에서 복구된 결과 ${snap.places.length}건이 있습니다.`)
+        setNotice(
+          `↻ 이전 세션에서 중단된 수집 결과 ${snap.places.length}건을 복구했습니다. ` +
+            `좌측 "현재 결과에 이어서 더 수집"으로 이어가거나, 상단 "초기화"로 비울 수 있습니다.`
+        )
       }
     })
 
@@ -61,7 +64,8 @@ export default function App(): JSX.Element {
       }),
       window.api.onCaptcha((message) =>
         setNotice(`⚠ CAPTCHA/로그인 감지로 수집이 중단되었습니다: ${message}`)
-      )
+      ),
+      window.api.onError((message) => setNotice(`⚠ ${message}`))
     ]
     return () => offs.forEach((off) => off())
   }, [appendLog, appendPlace])
