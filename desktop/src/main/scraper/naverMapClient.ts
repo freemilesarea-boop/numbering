@@ -114,27 +114,17 @@ function randomDelay(minMs: number, maxMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, randomInt(Math.max(0, minMs), Math.max(0, maxMs))))
 }
 
-// 실제 Chrome(Windows)과 동일한 User-Agent / 클라이언트 힌트 헤더.
+// 실제 Chrome(Windows)과 동일한 User-Agent. (이전부터 정상 동작하던 값)
 const REAL_CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
   'AppleWebKit/537.36 (KHTML, like Gecko) ' +
   'Chrome/124.0.0.0 Safari/537.36'
 
-const REAL_CHROME_HEADERS: Record<string, string> = {
-  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-  'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"Windows"',
-  'Upgrade-Insecure-Requests': '1'
-}
-
-// navigator.webdriver 등 자동화 흔적을 실제 브라우저처럼 보이도록 마스킹하는
-// init 스크립트(문자열 형태 — 브라우저 컨텍스트에서 실행됨).
+// navigator.webdriver 등 자동화 흔적만 가볍게 마스킹하는 init 스크립트.
+// (네이버 지도 SPA 렌더링을 깨지 않도록 plugins/headers 위조 등 과한 위장은 제외)
 const STEALTH_INIT_SCRIPT =
-  "Object.defineProperty(navigator,'webdriver',{get:()=>false});" +
-  "Object.defineProperty(navigator,'languages',{get:()=>['ko-KR','ko','en-US','en']});" +
-  "try{Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});}catch(e){}" +
-  "window.chrome=window.chrome||{runtime:{}};"
+  "try{Object.defineProperty(navigator,'webdriver',{get:()=>false});}catch(e){}" +
+  'window.chrome=window.chrome||{runtime:{}};'
 
 // 차단 방지 모드 타이밍.
 const STEALTH_CLICK_MIN_MS = 2000
@@ -162,7 +152,9 @@ export class NaverMapClient {
       this.pw = await chromium.launch({
         headless: this.config.headless,
         // 자동화 탐지(navigator.webdriver, AutomationControlled) 완화.
-        args: ['--disable-blink-features=AutomationControlled', '--disable-features=IsolateOrigins']
+        // 주: IsolateOrigins 등 사이트격리 관련 플래그는 네이버 지도 iframe
+        //     렌더링을 깨뜨릴 수 있어 사용하지 않는다.
+        args: ['--disable-blink-features=AutomationControlled']
       })
     } catch (err) {
       const msg = (err as Error).message || ''
@@ -181,15 +173,13 @@ export class NaverMapClient {
       throw new BrowserLaunchError(`브라우저 실행 실패: ${msg}`)
     }
     this.context = await this.pw.newContext({
-      locale: 'ko-KR',
+      locale: 'ko-KR', // Accept-Language: ko-KR 헤더가 자동 설정됨
       timezoneId: 'Asia/Seoul',
       userAgent: REAL_CHROME_UA,
       viewport: { width: 1280, height: 900 },
-      deviceScaleFactor: 1,
-      // 실제 Chrome 헤더와 동일화.
-      extraHTTPHeaders: REAL_CHROME_HEADERS
+      deviceScaleFactor: 1
     })
-    // 자동화 흔적 마스킹 스크립트를 모든 문서에 주입.
+    // 자동화 흔적 마스킹 스크립트를 모든 문서에 주입(가벼운 위장만).
     await this.context.addInitScript(STEALTH_INIT_SCRIPT)
     this.page = await this.context.newPage()
   }
