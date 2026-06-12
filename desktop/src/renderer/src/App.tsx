@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type {
   CollectedPlace,
   CollectionStatus,
@@ -33,13 +33,12 @@ export default function App(): JSX.Element {
     })
   }, [])
 
-  // 최초 마운트: 저장된(복구된) 상태를 불러오고 이벤트를 구독한다.
-  const initialized = useRef(false)
+  // 최초 1회: 저장된(복구된) 상태를 불러온다. StrictMode로 두 번 실행돼도
+  // snapshot은 멱등하므로 안전하다.
   useEffect(() => {
-    if (initialized.current) return
-    initialized.current = true
-
+    let active = true
     void window.api.snapshot().then((snap) => {
+      if (!active) return
       setStatus(snap.status)
       setPlaces(snap.places)
       setLog(snap.log)
@@ -52,7 +51,14 @@ export default function App(): JSX.Element {
         )
       }
     })
+    return () => {
+      active = false
+    }
+  }, [])
 
+  // IPC 이벤트 구독. 마운트마다 구독하고 언마운트마다 해제한다.
+  // (StrictMode가 마운트→언마운트→재마운트를 돌려도 매번 재구독되도록 가드를 두지 않는다.)
+  useEffect(() => {
     const offs = [
       window.api.onLog(appendLog),
       window.api.onPlace(appendPlace),
