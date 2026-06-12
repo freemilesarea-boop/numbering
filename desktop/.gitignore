@@ -1,0 +1,12 @@
+# 의존성 / 빌드 산출물
+node_modules/
+out/
+dist/
+
+# 중간 저장 상태 / 결과 파일 (런타임 생성)
+*.local
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
