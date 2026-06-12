@@ -102,19 +102,54 @@ export interface CollectControl {
   emitPlace(place: CollectedPlace): boolean
 }
 
+/** [min, max] 사이 랜덤 정수. */
+function randomInt(min: number, max: number): number {
+  const lo = Math.min(min, max)
+  const hi = Math.max(min, max)
+  return lo + Math.floor(Math.random() * (hi - lo + 1))
+}
+
 /** [min, max] 사이 랜덤 정수 ms 만큼 대기한다. */
 function randomDelay(minMs: number, maxMs: number): Promise<void> {
-  const lo = Math.max(0, Math.min(minMs, maxMs))
-  const hi = Math.max(minMs, maxMs)
-  const ms = lo + Math.floor(Math.random() * (hi - lo + 1))
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve) => setTimeout(resolve, randomInt(Math.max(0, minMs), Math.max(0, maxMs))))
 }
+
+// 실제 Chrome(Windows)과 동일한 User-Agent / 클라이언트 힌트 헤더.
+const REAL_CHROME_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+  'AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  'Chrome/124.0.0.0 Safari/537.36'
+
+const REAL_CHROME_HEADERS: Record<string, string> = {
+  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+  'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'Upgrade-Insecure-Requests': '1'
+}
+
+// navigator.webdriver 등 자동화 흔적을 실제 브라우저처럼 보이도록 마스킹하는
+// init 스크립트(문자열 형태 — 브라우저 컨텍스트에서 실행됨).
+const STEALTH_INIT_SCRIPT =
+  "Object.defineProperty(navigator,'webdriver',{get:()=>false});" +
+  "Object.defineProperty(navigator,'languages',{get:()=>['ko-KR','ko','en-US','en']});" +
+  "try{Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});}catch(e){}" +
+  "window.chrome=window.chrome||{runtime:{}};"
+
+// 차단 방지 모드 타이밍.
+const STEALTH_CLICK_MIN_MS = 2000
+const STEALTH_CLICK_MAX_MS = 5000
+const STEALTH_REST_EVERY = 20
+const STEALTH_REST_MIN_MS = 30000
+const STEALTH_REST_MAX_MS = 60000
 
 export class NaverMapClient {
   private readonly config: SearchConfig
   private pw: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
+  // 이번 collect() 실행에서 새로 수집(accepted)된 매장 수(휴식 주기 계산용).
+  private acceptedInRun = 0
 
   constructor(config: SearchConfig) {
     this.config = config
@@ -124,7 +159,11 @@ export class NaverMapClient {
 
   async start(): Promise<void> {
     try {
-      this.pw = await chromium.launch({ headless: this.config.headless })
+      this.pw = await chromium.launch({
+        headless: this.config.headless,
+        // 자동화 탐지(navigator.webdriver, AutomationControlled) 완화.
+        args: ['--disable-blink-features=AutomationControlled', '--disable-features=IsolateOrigins']
+      })
     } catch (err) {
       const msg = (err as Error).message || ''
       // Playwright는 브라우저가 없을 때 "Executable doesn't exist" 등을 던진다.
@@ -143,12 +182,15 @@ export class NaverMapClient {
     }
     this.context = await this.pw.newContext({
       locale: 'ko-KR',
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
-        'AppleWebKit/537.36 (KHTML, like Gecko) ' +
-        'Chrome/124.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 900 }
+      timezoneId: 'Asia/Seoul',
+      userAgent: REAL_CHROME_UA,
+      viewport: { width: 1280, height: 900 },
+      deviceScaleFactor: 1,
+      // 실제 Chrome 헤더와 동일화.
+      extraHTTPHeaders: REAL_CHROME_HEADERS
     })
+    // 자동화 흔적 마스킹 스크립트를 모든 문서에 주입.
+    await this.context.addInitScript(STEALTH_INIT_SCRIPT)
     this.page = await this.context.newPage()
   }
 
@@ -225,26 +267,76 @@ export class NaverMapClient {
   }
 
   /**
-   * CAPTCHA / 로그인 요구 화면을 감지하면 CaptchaError를 던진다.
-   * 공개 검색 화면이 막혔다는 신호이므로 수집을 즉시 중단해야 한다.
+   * CAPTCHA / 로그인 요구 / 서비스 이용 제한 화면을 감지하면 CaptchaError를
+   * 던진다. 공개 검색 화면이 막혔다는 신호이므로 수집을 즉시 중단해야 한다.
    */
   private async assertNotBlocked(): Promise<void> {
     const page = this.page
     if (!page) return
     const url = (page.url() || '').toLowerCase()
-    if (url.includes('captcha') || url.includes('nidlogin') || url.includes('nid.naver.com')) {
-      throw new CaptchaError('CAPTCHA 또는 로그인 요구 화면이 감지되었습니다.')
+    if (
+      url.includes('captcha') ||
+      url.includes('nidlogin') ||
+      url.includes('nid.naver.com') ||
+      url.includes('/blocked') ||
+      url.includes('abuse')
+    ) {
+      throw new CaptchaError('CAPTCHA·로그인 또는 접근 차단 화면이 감지되었습니다.')
     }
     try {
-      const body = ((await page.locator('body').innerText({ timeout: SHORT_TIMEOUT })) || '')
-        .toLowerCase()
-      const signals = ['captcha', '자동 입력 방지', '로봇이 아닙니다', '보안 문자', '비정상적인 접근']
-      if (signals.some((s) => body.includes(s.toLowerCase()))) {
-        throw new CaptchaError('CAPTCHA 또는 비정상 접근 차단 화면이 감지되었습니다.')
+      const body = (await page.locator('body').innerText({ timeout: SHORT_TIMEOUT })) || ''
+      // CAPTCHA / 로봇 검증
+      const captchaSignals = ['captcha', '자동 입력 방지', '로봇이 아닙니다', '보안 문자']
+      if (captchaSignals.some((s) => body.toLowerCase().includes(s.toLowerCase()))) {
+        throw new CaptchaError('CAPTCHA(자동 입력 방지) 화면이 감지되었습니다.')
+      }
+      // 서비스 이용 제한 / 비정상 접근 차단 (오탐 방지를 위해 구체적 문구만 사용)
+      const restrictionSignals = [
+        '비정상적인 접근이 감지',
+        '비정상적인 요청',
+        '자동화된 요청',
+        '서비스 이용이 제한',
+        '이용이 일시적으로 제한',
+        '일시적으로 이용할 수 없',
+        '접근이 차단',
+        '이용에 제한이 있을 수'
+      ]
+      if (restrictionSignals.some((s) => body.includes(s))) {
+        throw new CaptchaError('네이버 서비스 이용 제한(차단) 화면이 감지되었습니다.')
       }
     } catch (err) {
       if (err instanceof CaptchaError) throw err
       // 본문 읽기 실패는 무시(차단으로 단정하지 않음)
+    }
+  }
+
+  /** 차단 방지: 무작위로 마우스를 몇 번 움직여 사람처럼 보이게 한다. */
+  private async randomMouseMove(): Promise<void> {
+    const page = this.page
+    if (!page) return
+    try {
+      const steps = randomInt(2, 4)
+      for (let i = 0; i < steps; i++) {
+        await page.mouse.move(randomInt(40, 1240), randomInt(80, 860), { steps: randomInt(3, 8) })
+        await new Promise((r) => setTimeout(r, randomInt(80, 260)))
+      }
+    } catch {
+      /* 마우스 이동 실패는 무시 */
+    }
+  }
+
+  /**
+   * 지정 시간만큼 대기하되, 중단 요청이 오면 즉시 빠져나오고 일시정지를
+   * 존중한다(휴식/딜레이 중에도 중단·일시정지가 반응하도록).
+   */
+  private async interruptibleDelay(ms: number, control: CollectControl): Promise<void> {
+    const end = Date.now() + ms
+    while (Date.now() < end) {
+      if (control.shouldStop()) return
+      await control.waitIfPaused()
+      const remaining = end - Date.now()
+      if (remaining <= 0) return
+      await new Promise((r) => setTimeout(r, Math.min(250, remaining)))
     }
   }
 
@@ -457,6 +549,11 @@ export class NaverMapClient {
     const page = this.page
     if (!page) throw new NaverMapError('start()가 호출되지 않았습니다.')
 
+    this.acceptedInRun = 0
+    if (this.config.stealth) {
+      control.log('  [차단 방지 모드] 켜짐 — 클릭 후 2~5초 대기 / 20개마다 휴식 / 마우스 이동', 'info')
+    }
+
     const regionHint = keyword.split(/\s+/)[0] || ''
 
     try {
@@ -551,7 +648,17 @@ export class NaverMapClient {
           let link: Locator = item.locator(LIST_NAME_SELECTORS.join(', ')).first()
           if ((await link.count()) === 0) link = item
           await link.scrollIntoViewIfNeeded({ timeout: SHORT_TIMEOUT }).catch(() => {})
+          // 차단 방지: 클릭 전 무작위 마우스 이동
+          if (this.config.stealth) await this.randomMouseMove()
           await link.click({ timeout: SHORT_TIMEOUT })
+          // 차단 방지: 매장 클릭 후 랜덤 2~5초 대기
+          if (this.config.stealth) {
+            await this.interruptibleDelay(
+              randomInt(STEALTH_CLICK_MIN_MS, STEALTH_CLICK_MAX_MS),
+              control
+            )
+            if (control.shouldStop()) return
+          }
           // 클릭한 매장으로 상세가 실제로 바뀔 때까지 대기(이전 매장 정보 오독 방지).
           await this.waitForPlaceChange(prevUrl)
           await this.assertNotBlocked()
@@ -574,7 +681,25 @@ export class NaverMapClient {
         }
 
         const accepted = control.emitPlace(place)
-        if (accepted) newInRound += 1
+        if (accepted) {
+          newInRound += 1
+          this.acceptedInRun += 1
+          // 차단 방지: 20개 수집마다 30~60초 휴식
+          if (
+            this.config.stealth &&
+            this.acceptedInRun > 0 &&
+            this.acceptedInRun % STEALTH_REST_EVERY === 0 &&
+            !control.shouldStop()
+          ) {
+            const restMs = randomInt(STEALTH_REST_MIN_MS, STEALTH_REST_MAX_MS)
+            control.log(
+              `  [차단 방지] ${this.acceptedInRun}개 수집 — ${Math.round(restMs / 1000)}초 휴식합니다…`,
+              'warn'
+            )
+            await this.interruptibleDelay(restMs, control)
+            control.log('  [차단 방지] 휴식 종료, 수집을 계속합니다.', 'info')
+          }
+        }
         if (control.shouldStop()) return
       }
 

@@ -130,6 +130,16 @@ export default function SearchPanel({
           <span>인스타그램 보조 검색 사용</span>
         </label>
 
+        <label className="field field--inline">
+          <input
+            type="checkbox"
+            checked={config.stealth}
+            disabled={disabled}
+            onChange={(e) => set('stealth', e.target.checked)}
+          />
+          <span>네이버 차단 방지 모드 (느리지만 안전)</span>
+        </label>
+
         <div className="field field--row">
           <label className="field">
             <span className="field__label">최소 딜레이(ms)</span>
@@ -155,8 +165,9 @@ export default function SearchPanel({
           </label>
         </div>
         <p className="hint">
-          요청 사이 무작위 딜레이로 과도하게 빠른 요청을 방지합니다. CAPTCHA/로그인 화면 감지 시
-          자동으로 중단됩니다.
+          요청 사이 무작위 딜레이로 과도하게 빠른 요청을 방지합니다. <b>차단 방지 모드</b>를 켜면
+          매장 클릭 후 2~5초 대기, 20개마다 30~60초 휴식, 무작위 마우스 이동이 적용됩니다(느리지만
+          안전). CAPTCHA·로그인·서비스 이용 제한 화면 감지 시 자동으로 즉시 중단됩니다.
         </p>
       </details>
 
