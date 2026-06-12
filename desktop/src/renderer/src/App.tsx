@@ -43,7 +43,8 @@ export default function App(): JSX.Element {
       setPlaces(snap.places)
       setLog(snap.log)
       setProgress(snap.progress)
-      if (snap.config) setConfig(snap.config)
+      // 이전 버전 상태 파일에 없던 새 설정 필드는 기본값으로 채운다.
+      if (snap.config) setConfig({ ...DEFAULT_CONFIG, ...snap.config })
       if (snap.places.length > 0) {
         setNotice(
           `↻ 이전 세션에서 중단된 수집 결과 ${snap.places.length}건을 복구했습니다. ` +

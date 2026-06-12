@@ -38,6 +38,14 @@ export interface SearchConfig {
   maxDelayMs: number
   /** 상세에 인스타 링크가 없을 때 보조 검색 사용 여부 */
   instagramFallback: boolean
+  /**
+   * 네이버 차단 방지 모드. 켜면 느리지만 안전하게 동작한다.
+   * - 매장 클릭 후 랜덤 2~5초 대기
+   * - 20개 수집마다 30~60초 휴식
+   * - 무작위 마우스 이동
+   * (실제 Chrome 헤더 동일화 / CAPTCHA·이용제한 감지는 항상 적용)
+   */
+  stealth: boolean
 }
 
 /** 결과 파일/테이블의 한 행. 컬럼명은 요구사항 스펙 그대로 사용한다. */
@@ -102,5 +110,6 @@ export const DEFAULT_CONFIG: SearchConfig = {
   headless: false,
   minDelayMs: 800,
   maxDelayMs: 2200,
-  instagramFallback: true
+  instagramFallback: true,
+  stealth: true
 }
