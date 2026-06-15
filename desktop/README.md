@@ -29,8 +29,33 @@ npm run dev              # 개발 모드 실행 (핫 리로드)
 
 ```bash
 npm run build            # main/preload/renderer 번들
-npm run package          # electron-builder로 설치 파일 생성 (dist/)
+npm run package          # 현재 OS용 설치 파일 생성 (dist/)
+npm run package:win      # 윈도우 설치 파일(nsis)만
+npm run package:mac      # 맥 설치 파일(dmg)만
 ```
+
+> 패키징 전에 번들할 Chromium을 `pw-browsers/`에 받아둬야 합니다.
+> `PLAYWRIGHT_BROWSERS_PATH="$PWD/pw-browsers" npx playwright install chromium`
+> (CI에서는 자동으로 수행됩니다.)
+
+## GitHub Actions에서 윈도우 / 맥 빌드 다운로드
+
+별도 빌드 환경 없이 **Actions에서 설치 파일을 바로 받을 수 있습니다.**
+
+1. GitHub 저장소 → **Actions** → **Build Desktop App** 워크플로
+2. **Run workflow**(수동 실행)를 누르면 윈도우(x64) · 맥(Intel x64 · Apple Silicon arm64)
+   설치 파일이 빌드됩니다.
+3. 완료 후 실행 페이지 하단 **Artifacts**에서 다운로드:
+   - `Numbering-windows-x64` → `.exe` (NSIS 설치 관리자)
+   - `Numbering-macos-x64` / `Numbering-macos-arm64` → `.dmg`
+
+`v1.0.0` 같은 `v*` 태그를 푸시하면 동일 산출물이 **GitHub Release**에도 자동 첨부됩니다.
+
+각 OS 네이티브 러너에서 빌드하므로 해당 OS·아키텍처용 Chromium이 앱에 함께 번들되어,
+사용자는 **추가 설치 없이 바로 실행**할 수 있습니다.
+
+> 코드 서명은 적용하지 않습니다. 맥에서는 첫 실행 시 Gatekeeper 경고가 나올 수 있어
+> "우클릭 → 열기" 또는 시스템 설정에서 실행을 허용해야 할 수 있습니다.
 
 타입 체크:
 

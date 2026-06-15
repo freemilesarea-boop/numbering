@@ -6,6 +6,15 @@ import { CollectionController } from './controller'
 import { registerIpc } from './ipc'
 import { StateStore } from './store/stateStore'
 
+// 패키징된 앱에서는 설치 과정에서 함께 번들된 Chromium을 사용한다.
+// electron-builder의 extraResources로 복사된 `resources/pw-browsers` 폴더를
+// Playwright 브라우저 경로로 지정해, 사용자가 별도로 `playwright install`을
+// 실행하지 않아도 바로 동작하게 한다. (개발 모드에서는 기본 캐시를 사용)
+// Playwright는 실제 launch 시점에 이 환경변수를 읽으므로 진입점에서 설정하면 충분하다.
+if (app.isPackaged && !process.env.PLAYWRIGHT_BROWSERS_PATH) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = join(process.resourcesPath, 'pw-browsers')
+}
+
 const store = new StateStore()
 const controller = new CollectionController(store)
 

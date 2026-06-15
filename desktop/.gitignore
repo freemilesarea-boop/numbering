@@ -3,6 +3,10 @@ node_modules/
 out/
 dist/
 
+# 패키징 시 번들되는 Playwright Chromium (빌드 단계에서 다운로드, 폴더만 유지)
+pw-browsers/*
+!pw-browsers/.gitkeep
+
 # 중간 저장 상태 / 결과 파일 (런타임 생성)
 *.local
 

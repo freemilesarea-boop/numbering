@@ -14,7 +14,9 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "postinstall": "playwright install chromium",
-    "package": "electron-vite build && electron-builder"
+    "package": "electron-vite build && electron-builder --publish never",
+    "package:win": "electron-vite build && electron-builder --win --publish never",
+    "package:mac": "electron-vite build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "playwright": "^1.49.1",
@@ -37,8 +39,13 @@
     "appId": "com.numbering.desktop",
     "productName": "Numbering",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
+    "compression": "maximum",
+    "npmRebuild": false,
+    "removePackageScripts": true,
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "files": [
       "out/**/*",
       "package.json"
@@ -47,11 +54,39 @@
       "**/node_modules/playwright-core/**",
       "**/node_modules/playwright/**"
     ],
+    "extraResources": [
+      {
+        "from": "pw-browsers",
+        "to": "pw-browsers",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "win": {
-      "target": "nsis"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
     },
     "mac": {
-      "target": "dmg"
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.business",
+      "identity": null
+    },
+    "dmg": {
+      "writeUpdateInfo": false
     },
     "linux": {
       "target": "AppImage"

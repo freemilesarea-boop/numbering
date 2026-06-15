@@ -1,0 +1,96 @@
+name: Build Desktop App
+
+# 윈도우 / 맥 설치 파일을 빌드해 Actions에서 바로 다운로드할 수 있게 한다.
+# - 이 브랜치(claude/**)나 main에 푸시하면 자동 빌드 → Artifacts에서 다운로드
+# - 수동 실행(workflow_dispatch) 또는 v* 태그 푸시로도 동작
+# - 각 OS 네이티브 러너에서 빌드해, Playwright Chromium도 해당 OS/아키텍처용으로
+#   함께 번들한다(사용자가 별도 설치 불필요).
+# - v* 태그(프리릴리스 제외)를 푸시하면 빌드 산출물을 GitHub Release에 첨부한다.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+      - 'claude/**'
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: desktop
+
+jobs:
+  build:
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+          - os: macos-13
+            label: macos-x64
+          - os: macos-14
+            label: macos-arm64
+
+    env:
+      # npm ci의 postinstall(playwright install chromium)이 이 경로로 설치하고,
+      # electron-builder가 extraResources(pw-browsers)로 번들한다.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/desktop/pw-browsers
+      # CI에는 코드 서명 인증서가 없으므로 macOS 자동 서명 탐색을 비활성화한다.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies (+ bundled Chromium)
+        run: npm ci
+
+      - name: Build & package
+        run: npm run package
+
+      - name: List build output
+        run: ls -lh dist
+        shell: bash
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Numbering-${{ matrix.label }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Attach to Release
+    needs: build
+    runs-on: ubuntu-latest
+    # 정식 버전 태그(v1.2.3)에만 릴리스 생성. 프리릴리스(v1.2.3-rc.1)는 제외.
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
