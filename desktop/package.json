@@ -45,6 +45,7 @@
     "compression": "maximum",
     "npmRebuild": false,
     "removePackageScripts": true,
+    "afterPack": "build/afterPack.cjs",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "files": [
       "out/**/*",
@@ -83,7 +84,9 @@
         "dmg"
       ],
       "category": "public.app-category.business",
-      "identity": null
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "dmg": {
       "writeUpdateInfo": false
