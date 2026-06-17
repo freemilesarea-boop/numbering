@@ -14,7 +14,8 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "postinstall": "playwright install chromium",
-    "package": "electron-vite build && electron-builder"
+    "bundle:chromium": "node scripts/bundle-chromium.mjs",
+    "package": "npm run bundle:chromium && electron-vite build && electron-builder"
   },
   "dependencies": {
     "playwright": "^1.49.1",
@@ -42,6 +43,12 @@
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".playwright-browsers",
+        "to": "ms-playwright"
+      }
     ],
     "asarUnpack": [
       "**/node_modules/playwright-core/**",

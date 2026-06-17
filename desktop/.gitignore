@@ -3,6 +3,9 @@ node_modules/
 out/
 dist/
 
+# 번들용 Chromium (빌드 시 내려받음)
+.playwright-browsers/
+
 # 중간 저장 상태 / 결과 파일 (런타임 생성)
 *.local
 

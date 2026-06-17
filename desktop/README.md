@@ -38,10 +38,18 @@ npm run package          # electron-builder로 설치 파일 생성 (dist/)
 수동 실행하거나 `v*` 태그를 푸시하면 macOS(.dmg)·Windows(.exe) 설치 파일을 빌드합니다.
 빌드가 끝나면 해당 실행 페이지 하단 **Artifacts**(`numbering-macos`, `numbering-windows`)에서 내려받을 수 있습니다.
 
-> ⚠️ **다른 PC에 배포할 때 주의**: electron-builder 설치 파일에는 Playwright의 Chromium이 포함되지
-> 않습니다. 빌드한 본인 PC(이미 `npm install`로 Chromium이 캐시된 환경)에서는 바로 동작하지만,
-> Chromium이 없는 다른 PC에서 실행하면 첫 수집 시 "Chromium 미설치" 안내가 뜹니다. 영업팀 PC 등
-> 다른 컴퓨터로 배포하려면 설치 파일에 Chromium을 함께 번들하는 작업이 추가로 필요합니다(요청 시 적용).
+> ✅ **자립형(self-contained) 설치 파일**: 빌드 시 Chromium을 `resources/ms-playwright`로 함께
+> 번들하고, 패키징된 앱은 런타임에 `PLAYWRIGHT_BROWSERS_PATH`를 그 경로로 지정합니다. 따라서
+> **Chromium이 설치되지 않은 PC(영업팀 컴퓨터 등)에서도 설치 파일만 받아 바로 실행**됩니다.
+> 대신 Chromium 포함으로 설치 용량이 약 150MB 늘어납니다.
+
+### Chromium 번들 동작 방식
+
+- `npm run package`(및 CI)는 먼저 `npm run bundle:chromium`으로 `desktop/.playwright-browsers`에
+  Chromium을 설치합니다.
+- electron-builder가 이 폴더를 `extraResources`로 복사해 앱 리소스(`ms-playwright`)에 포함합니다.
+- 패키징된 앱은 `process.resourcesPath/ms-playwright`를 Playwright 브라우저 경로로 사용합니다.
+- 개발 모드(`npm run dev`)는 전역 캐시의 Chromium을 그대로 사용합니다(번들 불필요).
 
 타입 체크:
 
