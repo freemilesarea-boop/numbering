@@ -32,6 +32,17 @@ npm run build            # main/preload/renderer 번들
 npm run package          # electron-builder로 설치 파일 생성 (dist/)
 ```
 
+### GitHub Actions로 설치 파일 받기
+
+레포에 `.github/workflows/build-desktop.yml`가 있어, **Actions 탭 → "Build Desktop App" → Run workflow**로
+수동 실행하거나 `v*` 태그를 푸시하면 macOS(.dmg)·Windows(.exe) 설치 파일을 빌드합니다.
+빌드가 끝나면 해당 실행 페이지 하단 **Artifacts**(`numbering-macos`, `numbering-windows`)에서 내려받을 수 있습니다.
+
+> ⚠️ **다른 PC에 배포할 때 주의**: electron-builder 설치 파일에는 Playwright의 Chromium이 포함되지
+> 않습니다. 빌드한 본인 PC(이미 `npm install`로 Chromium이 캐시된 환경)에서는 바로 동작하지만,
+> Chromium이 없는 다른 PC에서 실행하면 첫 수집 시 "Chromium 미설치" 안내가 뜹니다. 영업팀 PC 등
+> 다른 컴퓨터로 배포하려면 설치 파일에 Chromium을 함께 번들하는 작업이 추가로 필요합니다(요청 시 적용).
+
 타입 체크:
 
 ```bash

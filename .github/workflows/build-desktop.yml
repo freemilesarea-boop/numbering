@@ -1,0 +1,61 @@
+name: Build Desktop App
+
+# 수동 실행(Actions 탭의 "Run workflow") 또는 v* 태그 푸시 시 빌드한다.
+# 빌드 산출물(.dmg / .exe / .AppImage)은 각 실행의 Artifacts에서 내려받을 수 있다.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build (${{ matrix.artifact }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: macos
+          - os: windows-latest
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        # 앱을 "빌드"하는 데에는 Playwright 브라우저가 필요 없으므로 다운로드를 건너뛴다.
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: Build renderer/main/preload
+        run: npm run build
+
+      - name: Package installer (electron-builder)
+        run: npx electron-builder --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: numbering-${{ matrix.artifact }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+            desktop/dist/*.zip
