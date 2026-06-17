@@ -6,6 +6,13 @@ import { CollectionController } from './controller'
 import { registerIpc } from './ipc'
 import { StateStore } from './store/stateStore'
 
+// 패키징된 앱에서는 함께 번들한 Chromium(resources/ms-playwright)을 사용한다.
+// 이렇게 하면 Chromium이 설치되지 않은 PC에서도 설치 파일만으로 바로 동작한다.
+// (개발 모드에서는 전역 캐시의 Chromium을 그대로 사용한다.)
+if (app.isPackaged) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = join(process.resourcesPath, 'ms-playwright')
+}
+
 const store = new StateStore()
 const controller = new CollectionController(store)
 
