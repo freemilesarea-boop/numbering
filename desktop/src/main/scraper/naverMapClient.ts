@@ -47,7 +47,19 @@ const LIST_ITEM_SELECTORS = [
 ]
 
 // 목록 카드에서 매장명(상세 진입용).
-const LIST_NAME_SELECTORS = ['span.YwYLL', 'span.TYaxT', 'span.place_bluelink', 'a span']
+// 주의: 'a span' 같은 광범위 셀렉터는 사진 썸네일 링크 안의 텍스트("이미지수64"
+//       등)를 잡아 사진 탭으로 잘못 진입시키므로 사용하지 않는다.
+const LIST_NAME_SELECTORS = [
+  'span.YwYLL',
+  'span.TYaxT',
+  'span.place_bluelink',
+  'span.CMy2_',
+  'span.O_Uah'
+]
+
+// 매장명이 아닌(사진 개수 등) 잘못된 텍스트를 거르기 위한 패턴.
+// 예) "이미지수64", "이미지 64", "사진수12", "64", "64장"
+const INVALID_NAME_RE = /(?:이미지수|사진수|이미지|동영상)\s*\d+|^\s*\d+\s*(?:장|개)?\s*$/
 
 // 검색 결과 목록 하단의 "다음페이지" 버튼 후보(여러 전략으로 시도).
 // 텍스트 기반(place_blind "다음페이지")이 가장 안정적이고, 클래스 기반은 폴백.
@@ -434,6 +446,35 @@ export class NaverMapClient {
     }
   }
 
+  /**
+   * 상세 패널이 사진/리뷰 등 다른 탭으로 열렸을 경우 '홈' 탭으로 전환한다.
+   * (전화번호/주소/링크는 홈 탭에서 노출되므로) 이미 홈이면 아무것도 하지 않는다.
+   */
+  private async ensureHomeTab(entry: FrameLocator): Promise<void> {
+    const tabSelectors = [
+      'a[role="tab"]:has-text("홈")',
+      'a.tpj9w:has-text("홈")',
+      'div.place_fixed_maintab a:has-text("홈")'
+    ]
+    for (const sel of tabSelectors) {
+      try {
+        const tab = entry.locator(sel).first()
+        if ((await tab.count()) === 0) continue
+        const selected = await tab.getAttribute('aria-selected').catch(() => null)
+        const cls = (await tab.getAttribute('class').catch(() => '')) || ''
+        // 이미 선택된 홈 탭이면 클릭 불필요.
+        if (selected === 'true' || /(?:^|\s)(?:_[A-Za-z0-9]+--selected|selected|on)(?:\s|$)/.test(cls)) {
+          return
+        }
+        await tab.click({ timeout: SHORT_TIMEOUT })
+        await new Promise((r) => setTimeout(r, 500))
+        return
+      } catch {
+        continue
+      }
+    }
+  }
+
   /** 상세 패널의 이름이 보일 때까지(=새 매장이 로드될 때까지) 대기한다. */
   private async waitForDetailReady(entry: FrameLocator): Promise<boolean> {
     const deadline = Date.now() + DETAIL_WAIT_TIMEOUT
@@ -493,6 +534,8 @@ export class NaverMapClient {
     }
 
     const entry = page.frameLocator(ENTRY_IFRAME)
+    // 혹시 사진/리뷰 등 다른 탭으로 열렸다면 '홈' 탭으로 전환(전화번호/주소는 홈 탭에 있음).
+    await this.ensureHomeTab(entry)
     // 새 매장 패널이 실제로 로드될 때까지 대기(이름 노출 기준).
     await this.waitForDetailReady(entry)
 
@@ -618,8 +661,26 @@ export class NaverMapClient {
         await control.waitIfPaused()
 
         const item = items.nth(idx)
-        const name = await NaverMapClient.firstText(item, LIST_NAME_SELECTORS)
-        if (!name) continue
+
+        // 이름 링크 = 사진 썸네일(img 포함 링크)이 아닌 본문 링크.
+        // 이것을 클릭해야 사진 탭이 아닌 매장 홈으로 진입한다.
+        const nameLink = item.locator('a:not(:has(img))').first()
+
+        // 매장명 읽기: 전용 셀렉터 우선 → 안 되면 이름 링크의 첫 줄.
+        let name = await NaverMapClient.firstText(item, LIST_NAME_SELECTORS)
+        if (!name || INVALID_NAME_RE.test(name)) {
+          try {
+            if ((await nameLink.count()) > 0) {
+              const t = ((await nameLink.innerText({ timeout: SHORT_TIMEOUT })) || '').trim()
+              const firstLine = t.split('\n')[0].trim()
+              if (firstLine && !INVALID_NAME_RE.test(firstLine)) name = firstLine
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        // 여전히 이름이 비었거나 사진 개수 같은 값이면 이 카드는 건너뛴다.
+        if (!name || INVALID_NAME_RE.test(name)) continue
 
         const place: CollectedPlace = {
           store_name: name,
@@ -635,7 +696,11 @@ export class NaverMapClient {
         // 상세 패널 진입 → 전화번호/주소/링크 추출
         try {
           const prevUrl = page.url() || ''
-          let link: Locator = item.locator(LIST_NAME_SELECTORS.join(', ')).first()
+          // 클릭 대상: 이름 링크(사진 썸네일 아님) 우선 → 이름 span → 최후로 카드.
+          let link: Locator = nameLink
+          if ((await link.count()) === 0) {
+            link = item.locator(LIST_NAME_SELECTORS.join(', ')).first()
+          }
           if ((await link.count()) === 0) link = item
           await link.scrollIntoViewIfNeeded({ timeout: SHORT_TIMEOUT }).catch(() => {})
           // 차단 방지: 클릭 전 무작위 마우스 이동
@@ -654,7 +719,9 @@ export class NaverMapClient {
           await this.assertNotBlocked()
 
           const detail = await this.extractDetail(control.log, regionHint)
-          place.store_name = detail.placeName || name
+          // 상세 이름이 유효하면 그것을, 아니면(빈값/사진개수 등) 목록 이름을 사용.
+          place.store_name =
+            detail.placeName && !INVALID_NAME_RE.test(detail.placeName) ? detail.placeName : name
           place.address = detail.address
           const { safe, mobile } = classifyPhone(detail.phone)
           place.safe_phone = safe
